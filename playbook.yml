@@ -1,0 +1,241 @@
+---
+- name: Update packages and install ocp clients
+  hosts: ocp-svc
+  tasks:
+    - name: Upgrade all packages
+      yum:
+        name: '*'
+        state: latest
+
+    - name: Download ocp-clients
+      get_url:
+        force: false
+        url: '{{ ocp_clients_url }}'
+        dest: /tmp/ocp-clients.tar.gz
+
+    - name: Install ocp-clients
+      unarchive:
+        src: /tmp/ocp-clients.tar.gz
+        dest: /usr/local/bin
+        remote_src: true
+        include: ['oc', 'kubectl']
+
+    - name: Install Git
+      yum:
+        name: git
+        state: latest
+
+
+- name: Install and configure bind nameserver
+  hosts: ocp-svc
+  tasks:
+    - name: Install bind and bind-utils
+      yum:
+        name: ['bind', 'bind-utils']
+        state: present
+
+    - name: Copy config file
+      copy:
+        src: ./dns/named.conf
+        dest: /etc/named.conf
+
+    - name: Copy zones
+      copy:
+        src: ./dns/zones
+        dest: /etc/named
+
+    - name: Enable and start the named service
+      systemd:
+        name: named
+        enabled: true
+        state: started
+    
+- name: Install and configure dhcp server
+  hosts: ocp-svc
+  tasks:
+    - name: Install dhcp-server
+      yum:
+        name: dhcp-server
+        state: present
+
+    - name: Generate dhcp config file
+      local_action: command sh ./generate_dhcp.conf.sh '{{ cluster_name }}'
+
+    - name: Copy dhcp config file
+      copy:
+        src: ./dhcpd.conf
+        dest: /etc/dhcp/dhcpd.conf
+
+    - name: Enable and start the dhcpd service
+      systemd:
+        name: dhcpd
+        enabled: true
+        state: started
+
+- name: Install and configure apache http server
+  hosts: ocp-svc
+  tasks:
+    - name: Install httpd
+      yum:
+        name: httpd
+        state: present
+
+    - name: Change default listen port to 8080
+      command: sed -i 's/Listen 80/Listen 0.0.0.0:8080/' /etc/httpd/conf/httpd.conf
+
+    - name: Enable and start the httpd service
+      systemd:
+        name: httpd
+        enabled: true
+        state: started
+
+- name: Install and configure HAProxy
+  hosts: ocp-svc
+  tasks:
+    - name: Install haproxy
+      yum:
+        name: haproxy
+        state: present
+
+    - name: Copy config file
+      copy:
+        src: ./haproxy.cfg
+        dest: /etc/haproxy/haproxy.cfg
+
+    - name: SELinux allow name_bind access
+      command: setsebool -P haproxy_connect_any 1
+
+    - name: Enable and start the haproxy service
+      systemd:
+        name: haproxy
+        enabled: true
+        state: started
+
+- name: Install and configure NFS server
+  hosts: ocp-svc
+  tasks:
+    - name: Install nfs-utils
+      yum:
+        name: nfs-utils
+        state: present
+
+    - name: Create storage location
+      shell: |
+        mkdir -p /shares/registry
+        chown -R nobody:nobody /shares/registry
+        chmod -R 777 /shares/registry
+
+    - name: Export share
+      shell: |
+        echo "/shares/registry  192.168.22.0/24(rw,sync,root_squash,no_subtree_check,no_wdelay)" > /etc/exports
+        exportfs -rv
+
+
+- name: Configure networking and firewall rules
+  hosts: ocp-svc
+  tasks:
+    - name: Configure networks
+      community.general.nmcli:
+        "{{ item }}"
+      with_items:
+        - conn_name: ocp-lan-net
+          type: ethernet
+          ip4: '192.168.22.1/24'
+          dns4: '127.0.0.1'
+          ifname: ens224
+          zone: internal
+          never_default4: true
+          dns4_search: ocp.lan
+          state: present
+        - conn_name: routed-nat-net
+          type: ethernet
+          method4: auto
+          ifname: ens192
+          method6: disabled
+          dns4: '127.0.0.1'
+          dns4_ignore_auto: true
+          zone: external
+          never_default4: no
+          dns4_search: ocp.lan
+          state: present
+
+    - name: Enable masquerading between two zones
+      ansible.posix.firewalld:
+        zone: '{{ item }}'
+        masquerade: true
+        permanent: true
+        immediate: true
+        state: enabled
+      with_items:
+        - internal
+        - external
+    
+    - name: Allow DNS queries from internal zone
+      ansible.posix.firewalld:
+        zone: internal
+        port: 53/udp
+        immediate: true
+        permanent: true
+        state: enabled
+    
+    - name: Allow DHCP queries from internal zone
+      ansible.posix.firewalld:
+        zone: internal
+        service: dhcp
+        immediate: true
+        permanent: true
+        state: enabled
+    
+    - name: Allow access to apache from internal zone
+      ansible.posix.firewalld:
+        zone: internal
+        port: 8080/tcp
+        immediate: true
+        permanent: true
+        state: enabled
+    
+    - name: Allow access to HAProxy ports
+      ansible.posix.firewalld:
+        zone: '{{ item.zone }}'
+        port: '{{ item.port }}'
+        immediate: true
+        permanent: true
+        state: enabled
+      with_items:
+        - port: 6443/tcp # kube-api-server on frontend
+          zone: internal
+        - port: 6443/tcp # kube-api-server on frontend
+          zone: external
+        - port: 22623/tcp # machine-config server
+          zone: internal
+        - port: 9000/tcp # stats page
+          zone: external
+    
+    - name: Allow access to HAProxy services
+      ansible.posix.firewalld:
+        zone: '{{ item.zone }}'
+        service: '{{ item.service }}'
+        permanent: true
+        immediate: true
+        state: enabled
+      with_items:
+        - service: http # web services on worker nodes
+          zone: internal
+        - service: http # web services on worker nodes
+          zone: external
+        - service: https # web services on worker nodes
+          zone: internal
+        - service: https # web services on worker nodes
+          zone: external
+
+    - name: Allow access to NFS server from internal zone
+      ansible.posix.firewalld:
+        zone: internal
+        service: '{{ item }}'
+        permanent: true
+        immediate: true
+        state: enabled
+      with_items:
+        - mountd
+        - rpc-bind
+        - nfs
