@@ -48,88 +48,7 @@
       systemd:
         name: named
         enabled: true
-        state: started
-    
-- name: Install and configure dhcp server
-  hosts: ocp-svc
-  tasks:
-    - name: Install dhcp-server
-      yum:
-        name: dhcp-server
-        state: present
-
-    - name: Generate dhcp config file
-      local_action: command sh ./generate_dhcp.conf.sh '{{ cluster_name }}'
-
-    - name: Copy dhcp config file
-      copy:
-        src: ./dhcpd.conf
-        dest: /etc/dhcp/dhcpd.conf
-
-    - name: Enable and start the dhcpd service
-      systemd:
-        name: dhcpd
-        enabled: true
-        state: started
-
-- name: Install and configure apache http server
-  hosts: ocp-svc
-  tasks:
-    - name: Install httpd
-      yum:
-        name: httpd
-        state: present
-
-    - name: Change default listen port to 8080
-      command: sed -i 's/Listen 80/Listen 0.0.0.0:8080/' /etc/httpd/conf/httpd.conf
-
-    - name: Enable and start the httpd service
-      systemd:
-        name: httpd
-        enabled: true
-        state: started
-
-- name: Install and configure HAProxy
-  hosts: ocp-svc
-  tasks:
-    - name: Install haproxy
-      yum:
-        name: haproxy
-        state: present
-
-    - name: Copy config file
-      copy:
-        src: ./haproxy.cfg
-        dest: /etc/haproxy/haproxy.cfg
-
-    - name: SELinux allow name_bind access
-      command: setsebool -P haproxy_connect_any 1
-
-    - name: Enable and start the haproxy service
-      systemd:
-        name: haproxy
-        enabled: true
-        state: started
-
-- name: Install and configure NFS server
-  hosts: ocp-svc
-  tasks:
-    - name: Install nfs-utils
-      yum:
-        name: nfs-utils
-        state: present
-
-    - name: Create storage location
-      shell: |
-        mkdir -p /shares/registry
-        chown -R nobody:nobody /shares/registry
-        chmod -R 777 /shares/registry
-
-    - name: Export share
-      shell: |
-        echo "/shares/registry  192.168.22.0/24(rw,sync,root_squash,no_subtree_check,no_wdelay)" > /etc/exports
-        exportfs -rv
-
+        state: restarted
 
 - name: Configure networking and firewall rules
   hosts: ocp-svc
@@ -202,13 +121,13 @@
         permanent: true
         state: enabled
       with_items:
-        - port: 6443/tcp # kube-api-server on frontend
+        - port: 6443/tcp  # kube-api-server on frontend
           zone: internal
-        - port: 6443/tcp # kube-api-server on frontend
+        - port: 6443/tcp  # kube-api-server on frontend
           zone: external
         - port: 22623/tcp # machine-config server
           zone: internal
-        - port: 9000/tcp # stats page
+        - port: 9000/tcp  # stats page
           zone: external
     
     - name: Allow access to HAProxy services
@@ -239,3 +158,89 @@
         - mountd
         - rpc-bind
         - nfs
+
+- name: Install and configure dhcp server
+  hosts: ocp-svc
+  tasks:
+    - name: Install dhcp-server
+      yum:
+        name: dhcp-server
+        state: present
+
+    - name: Generate dhcp config file
+      local_action: command sh ./generate_dhcp.conf.sh '{{ cluster_name }}'
+
+    - name: Copy dhcp config file
+      copy:
+        src: ./dhcpd.conf
+        dest: /etc/dhcp/dhcpd.conf
+
+    - name: Enable and start the dhcpd service
+      systemd:
+        name: dhcpd
+        enabled: true
+        state: restarted
+
+- name: Install and configure apache http server
+  hosts: ocp-svc
+  tasks:
+    - name: Install httpd
+      yum:
+        name: httpd
+        state: present
+
+    - name: Change default listen port to 8080
+      command: sed -i 's/Listen 80/Listen 0.0.0.0:8080/' /etc/httpd/conf/httpd.conf
+
+    - name: Enable and start the httpd service
+      systemd:
+        name: httpd
+        enabled: true
+        state: restarted
+
+- name: Install and configure HAProxy
+  hosts: ocp-svc
+  tasks:
+    - name: Install haproxy
+      yum:
+        name: haproxy
+        state: present
+
+    - name: Copy config file
+      copy:
+        src: ./haproxy.cfg
+        dest: /etc/haproxy/haproxy.cfg
+
+    - name: SELinux allow name_bind access
+      command: setsebool -P haproxy_connect_any 1
+
+    - name: Enable and start the haproxy service
+      systemd:
+        name: haproxy
+        enabled: true
+        state: restarted
+
+- name: Install and configure NFS server
+  hosts: ocp-svc
+  tasks:
+    - name: Install nfs-utils
+      yum:
+        name: nfs-utils
+        state: present
+
+    - name: Create storage location
+      shell: |
+        mkdir -p /shares/registry
+        chown -R nobody:nobody /shares/registry
+        chmod -R 777 /shares/registry
+
+    - name: Export share
+      shell: |
+        echo "/shares/registry  192.168.22.0/24(rw,sync,root_squash,no_subtree_check,no_wdelay)" > /etc/exports
+        exportfs -rv
+
+    - name: Enable and start the nfs-server service
+      systemd:
+        name: nfs-server
+        enabled: true
+        state: restarted
