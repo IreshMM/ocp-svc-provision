@@ -250,3 +250,42 @@
         name: nfs-server
         enabled: true
         state: restarted
+
+- name: Prepare installation environment for openshift
+  hosts: ocp-svc
+  tasks:
+    - name: Install vim, jq
+      yum:
+        name: ['vim', 'jq']
+        state: present
+
+    - name: Config vim for easy yaml editing
+      copy:
+        dest: "{{ ansible_env.HOME }}/.vimrc"
+        content: |
+          syntax on
+          set nu et ai sts=0 ts=2 sw=2 hls
+        mode: 644
+
+    - name: Make vim the default editor and set bash vi mode
+      blockinfile:
+        dest: "{{ ansible_env.HOME}}/.bashrc"
+        block: |
+          export OC_EDITOR="vim"
+          export KUBE_EDITOR="vim"
+          export EDITOR="vim"
+          set -o vi
+        marker: '# {mark} ANSIBLE MANAGED BLOCK - virtualenv'
+        insertBefore: EOF
+
+    - name: Download ocp-installer
+      get_url:
+        force: false
+        url: '{{ ocp_installer_url }}'
+        dest: /tmp/ocp-installer.tar.gz
+
+    - name: Install ocp-clients
+      unarchive:
+        src: /tmp/ocp-installer.tar.gz
+        dest: "{{ ansible_env.HOME }}"
+        remote_src: true
