@@ -167,6 +167,12 @@
         name: dhcp-server
         state: present
 
+    - name: Ensure jq is installed
+      yum:
+        name: jq
+        state: present
+      delegate_to: localhost
+
     - name: Generate dhcp config file
       local_action: command sh ./generate_dhcp.conf.sh '{{ cluster_name }}'
 
