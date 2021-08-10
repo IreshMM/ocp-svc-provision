@@ -1,0 +1,5 @@
+group1:
+  hosts:
+    ocp-svc:
+      ansible_host: 192.168.8.101
+      ansible_user: root
