@@ -168,6 +168,7 @@
         state: present
 
     - name: Ensure jq is installed
+      become: true
       yum:
         name: jq
         state: present
@@ -276,7 +277,7 @@
           export EDITOR="vim"
           set -o vi
         marker: '# {mark} ANSIBLE MANAGED BLOCK - virtualenv'
-        insertBefore: EOF
+        insertbefore: EOF
 
     - name: Download ocp-installer
       get_url:
